@@ -99,10 +99,26 @@ jobs:
               f.write(prompt)
           "
 
-          # Run Claude with prompt via stdin
-          claude --print --allowedTools "mcp__playwright__*,Read,Bash" \
+          # Debug: verify files and claude installation
+          echo "--- Claude version ---"
+          claude --version
+
+          echo "--- MCP config ---"
+          cat ~/.claude/settings.json
+
+          echo "--- Prompt ---"
+          cat /tmp/prompt.txt
+
+          # Run Claude with prompt via stdin, capture stderr for debugging
+          claude --print \
+            --allowedTools "mcp__playwright__*,Read,Bash" \
+            --dangerously-skip-permissions \
             < /tmp/prompt.txt \
-            > /tmp/analysis.md
+            > /tmp/analysis.md 2>/tmp/analysis_err.txt || {
+            echo "=== Claude stderr ==="
+            cat /tmp/analysis_err.txt
+            exit 1
+          }
 
           echo "=== Analysis ==="
           cat /tmp/analysis.md
