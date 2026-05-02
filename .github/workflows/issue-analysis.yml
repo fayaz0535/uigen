@@ -1,0 +1,87 @@
+name: Issue Analysis
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client & run migrations
+        run: |
+          npx prisma generate
+          npx prisma migrate deploy
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Start dev server
+        run: npm run dev &
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Wait for server to be ready
+        run: npx wait-on http://localhost:3000 --timeout 30000
+
+      - name: Install Claude CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Analyze issue with Claude + Playwright
+        id: analysis
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          ISSUE_NUMBER="${{ github.event.issue.number }}"
+          ISSUE_TITLE="${{ github.event.issue.title }}"
+          ISSUE_BODY=$(cat <<'ISSUE_EOF'
+          ${{ github.event.issue.body }}
+          ISSUE_EOF
+          )
+
+          claude --print \
+            --mcp-config '{"mcpServers":{"playwright":{"command":"npx","args":["@playwright/mcp@latest","--browser","chromium","--headless"]}}}' \
+            "You are a senior engineer triaging GitHub issue #${ISSUE_NUMBER} for the uigen project.
+
+          Issue title: ${ISSUE_TITLE}
+          Issue body: ${ISSUE_BODY}
+
+          The app is running at http://localhost:3000.
+
+          Steps:
+          1. Use Playwright MCP to open the app and try to reproduce the reported issue.
+          2. Read the relevant source files to identify the root cause.
+          3. Write a structured comment for the GitHub issue with:
+             - **Summary** of what you found
+             - **Root cause** (file + line if possible)
+             - **Steps to reproduce** (confirmed or not)
+             - **Suggested fix**
+
+          Be concise and technical. Format as Markdown." \
+            > /tmp/analysis.md
+
+          echo "Analysis complete"
+          cat /tmp/analysis.md
+
+      - name: Post analysis as issue comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue comment ${{ github.event.issue.number }} \
+            --repo ${{ github.repository }} \
+            --body "$(cat /tmp/analysis.md)"
