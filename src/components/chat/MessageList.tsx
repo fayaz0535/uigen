@@ -39,6 +39,12 @@ export function MessageList({ messages, isLoading }: MessageListProps) {
   return (
     <div className="flex flex-col h-full overflow-y-auto px-4 py-6">
       <div className="space-y-6 max-w-4xl mx-auto w-full">
+        {messages.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <p className="text-neutral-700 font-medium">Start a conversation to generate React components</p>
+            <p className="text-neutral-500 text-sm mt-1">I can help you create buttons, forms, cards, and more</p>
+          </div>
+        )}
         {messages.map((message) => (
           <div
             key={message.id || message.content}
