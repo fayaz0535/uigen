@@ -47,19 +47,30 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          ISSUE_NUMBER="${{ github.event.issue.number }}"
-          ISSUE_TITLE="${{ github.event.issue.title }}"
-          ISSUE_BODY=$(cat <<'ISSUE_EOF'
-          ${{ github.event.issue.body }}
-          ISSUE_EOF
-          )
+          # Write MCP config to file (--mcp-config requires a file path)
+          cat > /tmp/mcp-config.json << 'EOF'
+          {
+            "mcpServers": {
+              "playwright": {
+                "command": "npx",
+                "args": ["@playwright/mcp@latest", "--browser", "chromium", "--headless"]
+              }
+            }
+          }
+          EOF
 
-          claude --print \
-            --mcp-config '{"mcpServers":{"playwright":{"command":"npx","args":["@playwright/mcp@latest","--browser","chromium","--headless"]}}}' \
-            "You are a senior engineer triaging GitHub issue #${ISSUE_NUMBER} for the uigen project.
+          # Write prompt to file to avoid shell quoting issues
+          cat > /tmp/prompt.txt << 'EOF'
+          You are a senior engineer triaging a GitHub issue for the uigen project.
+          EOF
 
-          Issue title: ${ISSUE_TITLE}
-          Issue body: ${ISSUE_BODY}
+          printf "\nIssue #%s: %s\n" \
+            "${{ github.event.issue.number }}" \
+            "${{ github.event.issue.title }}" >> /tmp/prompt.txt
+
+          printf "Issue body:\n%s\n" "${{ github.event.issue.body }}" >> /tmp/prompt.txt
+
+          cat >> /tmp/prompt.txt << 'EOF'
 
           The app is running at http://localhost:3000.
 
@@ -72,7 +83,12 @@ jobs:
              - **Steps to reproduce** (confirmed or not)
              - **Suggested fix**
 
-          Be concise and technical. Format as Markdown." \
+          Be concise and technical. Format as Markdown.
+          EOF
+
+          claude --print \
+            --mcp-config /tmp/mcp-config.json \
+            "$(cat /tmp/prompt.txt)" \
             > /tmp/analysis.md
 
           echo "Analysis complete"
