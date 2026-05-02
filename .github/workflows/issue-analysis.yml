@@ -46,31 +46,39 @@ jobs:
         id: analysis
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
-          # Write MCP config to file (--mcp-config requires a file path)
-          cat > /tmp/mcp-config.json << 'EOF'
-          {
-            "mcpServers": {
-              "playwright": {
-                "command": "npx",
-                "args": ["@playwright/mcp@latest", "--browser", "chromium", "--headless"]
+          mkdir -p ~/.claude
+
+          # Write MCP config using python to avoid YAML/heredoc indentation issues
+          python3 -c "
+          import json, os
+          config = {
+            'mcpServers': {
+              'playwright': {
+                'command': 'npx',
+                'args': ['@playwright/mcp@latest', '--browser', 'chromium', '--headless']
               }
             }
           }
-          EOF
+          with open(os.path.expanduser('~/.claude/settings.json'), 'w') as f:
+              json.dump(config, f, indent=2)
+          "
 
-          # Write prompt to file to avoid shell quoting issues
-          cat > /tmp/prompt.txt << 'EOF'
-          You are a senior engineer triaging a GitHub issue for the uigen project.
-          EOF
+          # Write prompt using python to handle multiline content safely
+          python3 -c "
+          import os
+          number = os.environ['ISSUE_NUMBER']
+          title = os.environ['ISSUE_TITLE']
+          body = os.environ['ISSUE_BODY']
+          prompt = f'''You are a senior engineer triaging a GitHub issue for the uigen project.
 
-          printf "\nIssue #%s: %s\n" \
-            "${{ github.event.issue.number }}" \
-            "${{ github.event.issue.title }}" >> /tmp/prompt.txt
+          Issue #{number}: {title}
 
-          printf "Issue body:\n%s\n" "${{ github.event.issue.body }}" >> /tmp/prompt.txt
-
-          cat >> /tmp/prompt.txt << 'EOF'
+          Issue body:
+          {body}
 
           The app is running at http://localhost:3000.
 
@@ -83,21 +91,31 @@ jobs:
              - **Steps to reproduce** (confirmed or not)
              - **Suggested fix**
 
-          Be concise and technical. Format as Markdown.
-          EOF
+          Be concise and technical. Format as Markdown.'''
 
-          claude --print \
-            --mcp-config /tmp/mcp-config.json \
-            "$(cat /tmp/prompt.txt)" \
+          with open('/tmp/prompt.txt', 'w') as f:
+              f.write(prompt)
+          "
+
+          # Run Claude with prompt via stdin
+          claude --print --allowedTools "mcp__playwright__*,Read,Bash" \
+            < /tmp/prompt.txt \
             > /tmp/analysis.md
 
-          echo "Analysis complete"
+          echo "=== Analysis ==="
           cat /tmp/analysis.md
 
       - name: Post analysis as issue comment
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue comment ${{ github.event.issue.number }} \
-            --repo ${{ github.repository }} \
-            --body "$(cat /tmp/analysis.md)"
+          if [ -s /tmp/analysis.md ]; then
+            BODY="$(cat /tmp/analysis.md)"
+          else
+            BODY="⚠️ Claude analysis failed to produce output. Check the [workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
+          fi
+
+          gh issue comment "${{ github.event.issue.number }}" \
+            --repo "${{ github.repository }}" \
+            --body "$BODY"
