@@ -109,19 +109,21 @@ jobs:
           echo "--- Prompt ---"
           cat /tmp/prompt.txt
 
-          # Run Claude with prompt via stdin, capture stderr for debugging
-          claude --print \
-            --allowedTools "mcp__playwright__*,Read,Bash" \
-            --dangerously-skip-permissions \
+          # Run Claude - merge stderr into stdout so we see all output
+          set +e
+          claude --print --allowedTools "mcp__playwright__*,Read,Bash" \
             < /tmp/prompt.txt \
-            > /tmp/analysis.md 2>/tmp/analysis_err.txt || {
-            echo "=== Claude stderr ==="
-            cat /tmp/analysis_err.txt
-            exit 1
-          }
+            > /tmp/analysis.md 2>&1
+          CLAUDE_EXIT=$?
+          set -e
 
-          echo "=== Analysis ==="
+          echo "=== Claude exit code: $CLAUDE_EXIT ==="
+          echo "=== Claude output ==="
           cat /tmp/analysis.md
+
+          if [ $CLAUDE_EXIT -ne 0 ]; then
+            exit $CLAUDE_EXIT
+          fi
 
       - name: Post analysis as issue comment
         if: always()
